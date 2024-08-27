@@ -17,6 +17,25 @@ import torch
 import util.misc as misc
 import util.lr_sched as lr_sched
 
+def validate(model, data_loader_val, device, args):
+    model.eval()
+    metric_logger = misc.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    with torch.no_grad():
+        for samples, _ in metric_logger.log_every(data_loader_val, 10, header):
+            samples = samples.to(device, non_blocking=True)
+
+            with torch.cuda.amp.autocast():
+                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+
+            loss_value = loss.item()
+            metric_logger.update(loss=loss_value)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 def train_one_epoch(model: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,

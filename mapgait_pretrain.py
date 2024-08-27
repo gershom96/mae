@@ -31,10 +31,12 @@ import timm.optim.optim_factory as optim_factory
 
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from util.distributed_sampler import DistributedWeightedSampler
 
 import models_mae
 
 from engine_pretrain import train_one_epoch
+from engine_pretrain import validate
 from torch.utils.data.sampler import WeightedRandomSampler
 
 def get_args_parser():
@@ -145,7 +147,16 @@ def main(args):
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    
+    transform_val = transforms.Compose([
+        transforms.Resize(args.input_size),
+        transforms.CenterCrop(args.input_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
     dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
+    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, 'val'), transform=transform_val)
+
     print(dataset_train)
 
     # Compute sample weights based on class imbalance
@@ -155,8 +166,15 @@ def main(args):
     if args.distributed:
         num_tasks = misc.get_world_size()
         global_rank = misc.get_rank()
-        sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+
+        # Assuming `sample_weights` is a list or array with weights for each sample
+        sampler_train = DistributedWeightedSampler(
+            dataset_train,
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            num_replicas=num_tasks,
+            rank=global_rank,
+            replacement=True
         )
         print("Sampler_train = %s" % str(sampler_train))
     else:
@@ -178,6 +196,14 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
+    )
+
+    data_loader_val = torch.utils.data.DataLoader(
+        dataset_val, sampler=sampler_val,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
     )
     
     # define the model
@@ -221,14 +247,19 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
+            data_loader_val.sampler.set_epoch(epoch)
+            
         train_stats = train_one_epoch(
             model, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             log_writer=log_writer,
             args=args
         )
-        
-        wandb.log({**train_stats, 'epoch': epoch})  # Log metrics to wandb
+
+        val_stats = validate(model, data_loader_val, device, args)
+
+        # Log training and validation metrics
+        wandb.log({**train_stats, 'epoch': epoch, **{'val_loss': val_stats['loss']}})  # Log metrics to wandb
 
         if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
@@ -236,7 +267,8 @@ def main(args):
                 loss_scaler=loss_scaler, epoch=epoch)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                        'epoch': epoch,}
+                        **{f'val_{k}': v for k, v in val_stats.items()},
+                        'epoch': epoch}
 
         if args.output_dir and misc.is_main_process():
             if log_writer is not None:
@@ -247,7 +279,6 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-
 
 if __name__ == '__main__':
     args = get_args_parser()
