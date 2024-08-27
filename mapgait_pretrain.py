@@ -268,7 +268,7 @@ def main(args):
         val_stats = validate(model, data_loader_val, device, args)
 
         # Log training and validation metrics
-        wandb.log({**train_stats, 'epoch': epoch, **{'val_loss': val_stats['loss']}})  # Log metrics to wandb
+        wandb.log({**train_stats, 'epoch': epoch, **{f'val_{k}': v for k, v in val_stats.items()}})
 
         if args.output_dir and (epoch % 20 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
