@@ -35,7 +35,7 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import models_mae
 
 from engine_pretrain import train_one_epoch
-
+from torch.utils.data.sampler import WeightedRandomSampler
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -105,6 +105,21 @@ def get_args_parser():
 
     return parser
 
+def compute_class_weights(dataset):
+    # Compute the number of images in each class
+    class_counts = [0] * len(dataset.classes)
+    for _, class_idx in dataset.samples:
+        class_counts[class_idx] += 1
+    
+    # Compute the class weights as inverse of class frequency
+    class_weights = 1.0 / torch.tensor(class_counts, dtype=torch.float)
+    
+    # Create a weight for each sample
+    sample_weights = [0] * len(dataset)
+    for idx, (_, class_idx) in enumerate(dataset.samples):
+        sample_weights[idx] = class_weights[class_idx]
+    
+    return sample_weights
 
 def main(args):
     # Initialize wandb
@@ -133,7 +148,11 @@ def main(args):
     dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
     print(dataset_train)
 
-    if True:  # args.distributed:
+    # Compute sample weights based on class imbalance
+    sample_weights = compute_class_weights(dataset_train)
+    global_rank = misc.get_rank()
+    
+    if args.distributed:
         num_tasks = misc.get_world_size()
         global_rank = misc.get_rank()
         sampler_train = torch.utils.data.DistributedSampler(
@@ -141,7 +160,11 @@ def main(args):
         )
         print("Sampler_train = %s" % str(sampler_train))
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_train = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    )
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
