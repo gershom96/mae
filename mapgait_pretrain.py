@@ -176,13 +176,22 @@ def main(args):
             rank=global_rank,
             replacement=True
         )
+        
+        # DistributedSampler for validation
+        sampler_val = torch.utils.data.distributed.DistributedSampler(
+            dataset_val, 
+            num_replicas=num_tasks, 
+            rank=global_rank, 
+            shuffle=False
+        )
         print("Sampler_train = %s" % str(sampler_train))
     else:
         sampler_train = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    )
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
