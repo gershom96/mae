@@ -43,6 +43,8 @@ def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
+    parser.add_argument('--start_epoch_lr', default=0, type=int,
+                        help='to have cosine annealing in resuming ')
     parser.add_argument('--epochs', default=400, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
@@ -67,12 +69,12 @@ def get_args_parser():
 
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (absolute lr)')
-    parser.add_argument('--blr', type=float, default=1e-5, metavar='LR',
+    parser.add_argument('--blr', type=float, default=5e-4, metavar='LR',
                         help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
     parser.add_argument('--min_lr', type=float, default=0., metavar='LR',
                         help='lower lr bound for cyclic schedulers that hit 0')
 
-    parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
+    parser.add_argument('--warmup_epochs', type=int, default=10, metavar='N',
                         help='epochs to warmup LR')
 
     # Dataset parameters
@@ -102,6 +104,7 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
+    parser.add_argument('--distributed', default= False, type = bool)
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
 
@@ -125,14 +128,16 @@ def compute_class_weights(dataset):
 
 def main(args):
     # Initialize wandb
-    wandb.init(project="mae-pretrain", config=args)
+    # wandb.finish()  # End any previous runs
+
+    wandb.init(project="mae-pretrain-cluster", config=args, force = True)
 
     misc.init_distributed_mode(args)
 
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(', ', ',\n'))
 
-    device = torch.device(args.device)
+    device = torch.device("cuda:0")
 
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
@@ -161,6 +166,9 @@ def main(args):
 
     # Compute sample weights based on class imbalance
     sample_weights = compute_class_weights(dataset_train)
+
+    print(sample_weights
+    )
     global_rank = misc.get_rank()
     
     if args.distributed:
@@ -294,7 +302,7 @@ if __name__ == '__main__':
     args = args.parse_args()
 
     # Initialize wandb project
-    wandb.init(project="mae-pretrain", config=args)
+    # wandb.init(project="mae-pretrain-cluster", config=args)
 
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from torch._six import inf
+#from torch._six import inf
 
 
 class SmoothedValue(object):
@@ -223,6 +223,11 @@ def init_distributed_mode(args):
         os.environ['RANK'] = str(args.rank)
         os.environ['WORLD_SIZE'] = str(args.world_size)
         # ["RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "LOCAL_RANK"]
+    elif(not args.distributed):
+        print('Not using distributed mode')
+        setup_for_distributed(is_master=True)  # hack
+        args.distributed = False
+        return
     elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -278,6 +283,9 @@ class NativeScalerWithGradNormCount:
 
 
 def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
+
+    inf = float('inf')
+
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
     parameters = [p for p in parameters if p.grad is not None]
